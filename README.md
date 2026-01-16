@@ -1,1 +1,1 @@
-MA and ARMA likelihood functions. AR standard linear regression. Tested on AAPL stock.
+MA, AR, ARMA and ARCH likelihood functions
