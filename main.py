@@ -71,7 +71,6 @@ class AR:
         dt['eps_hat'] = dt['y'] - dt['y_hat']
         dt = dt.dropna()
         self.error = np.dot(dt['eps_hat'], dt['eps_hat'])/dt.shape[0]
-        print(dt)
         return dt
 
     def plot(self):
@@ -160,29 +159,160 @@ class MA:
         plt.show()
 
 
-MAs = list(range(1, 10))
-MA_error = []
-ARs = list(range(1, 10))
-AR_error = []
+# create ARMA function
 
-for q in MAs:
-    model = MA(train['return'], q)
-    model.get_error()
-    MA_error.append(model.error)
+class ARMA:
+    def __init__(self, p, q, y):
+        self.y = y
+        self.p = p
+        self.q = q
+        self.T = len(self.y)
+        mu0 = self.y.mean()
+        sigma0 = self.y.std()
+        phi0 = [0]*p
+        theta0 = [0]*q
+        self.params0 = [mu0] + phi0 + theta0 + [sigma0]
+        self.bounds = [(None, None)] + [(-0.999, 0.999)]*(p+q) + [(1e-5, None)]
+
+        self.params_hat = self.fit().x
 
 
-for p in ARs:
-    model = AR(train['return'], p)
-    model.get_error()
-    AR_error.append(model.error)
+    def ARMA_loglike(self, params):
+        y = self.y
+        p = self.p
+        q = self.q
+        mu = params[0]
+        phi = params[1:1+p]
+        theta = params[1+p:1+p+q]
+        sigma = params[-1]
+        
+        if sigma <= 0:
+            return np.inf
+        
+        T = len(y)
+        eps = np.zeros(T)
+        
+        for t in range(T):
+            ar_term = sum(phi[i] * (y[t-1-i]-mu) for i in range(min(p, t)))
+            ma_term = sum(theta[j] * eps[t-1-j] for j in range(min(q, t)))
+            eps[t] = y[t] - mu - ar_term - ma_term
+        
+        ll = -0.5 * np.sum(np.log(2*np.pi*sigma**2) + eps**2 / sigma**2)
 
-MA_results = pd.DataFrame({'q': MAs, 'error': MA_error})
-MA_results = MA_results.sort_values(['error'])
+        return -ll
+    
+    def fit(self, method="L-BFGS-B"):
+        results = minimize(
+            self.ARMA_loglike,
+            self.params0,
+            method=method,
+            bounds=self.bounds
+        )
 
-print(MA_results)
+        return results
+    
+    def forecast(self):
+        params = self.params_hat
+        mu_hat = params[0]
+        phi_hat = params[1:1+self.p]
+        theta_hat = params[1+self.p:1+self.p+self.q]
+        sigma_hat = params[-1]
 
-AR_results = pd.DataFrame({'p': ARs, 'error': AR_error})
-AR_results = AR_results.sort_values(['error'])
+        eps = np.zeros(self.T)
+        y_hat = np.zeros(self.T)
+        for t in range(self.T):
+            ar_term = sum(phi_hat[i] * (self.y[t-1-i]-mu_hat) for i in range(min(self.p, t)))
+            ma_term = sum(theta_hat[j] * eps[t-1-j] for j in range(min(self.q, t)))
+            y_hat[t] = mu_hat + ar_term + ma_term
+            eps[t] = self.y[t] - y_hat[t]
 
-print(AR_results)
+        return pd.DataFrame({'y':self.y, 'y_hat':y_hat, 'eps':eps})
+    
+
+    def plot(self):
+        data = self.forecast()
+        plt.plot(range(data.shape[0]), data['y'], color='blue')
+        plt.plot(range(data.shape[0]), data['y_hat'], color='red')
+        plt.show()
+
+
+# create ARCH function
+
+class ARCH:
+    def __init__(self, y, d, p, q, coefs):
+        self.y = list(y)
+        self.d = d
+        self.p = p
+        self.q = q
+        self.coefs = list(coefs)
+        self.T = len(self.y)
+
+        self.residuals = self.calculate_residuals()
+
+        self.params0 = [1e-1]*(self.d+1)
+        self.bounds = [(1e-6, None)]*(self.d+1)
+
+        self.sigma_coefs_hat = self.fit().x
+        
+
+
+    def calculate_residuals(self):
+        y = self.y
+        eps = np.zeros(self.T)
+        y_hat = np.zeros(self.T)
+
+        mu_hat = self.coefs[0]
+        phi_hat = self.coefs[1:1+self.p]
+        theta_hat = self.coefs[1+self.p:1+self.p+self.q]
+        sigma_hat = self.coefs[-1]
+
+        for t in range(self.T):
+            ar_term = sum(phi_hat[i] * (self.y[t-1-i]-mu_hat) for i in range(min(self.p, t)))
+            ma_term = sum(theta_hat[j] * eps[t-1-j] for j in range(min(self.q, t)))
+            y_hat[t] = mu_hat + ar_term + ma_term
+            eps[t] = self.y[t] - y_hat[t]
+
+        return pd.DataFrame({'y': y, 'y_hat': y_hat, 'eps': eps})
+
+
+    def ARCH_loglike(self, params, eps):
+        eps = list(eps)
+        coefs = params
+
+        if sum([(x < 0) for x in params]) > 0:
+            return np.inf
+
+        sigma2 = np.zeros(self.T)
+        sigma2[0] = np.var(eps)
+        
+        for t in range(self.T):
+            sigma2[t] = coefs[0] + sum([(a**2)*b for a, b in zip(eps[max(0,t-self.d):t], coefs[1:min(t, self.d)+1])])
+
+        ll = -0.5 * np.sum(np.log(2*np.pi) + np.log(np.array(sigma2)) + np.array(eps)**2 / np.array(sigma2))
+
+        return -ll
+    
+
+    def fit(self, method="L-BFGS-B"):
+        residuals = list(self.residuals['eps'])
+        results = minimize(
+            self.ARCH_loglike,
+            self.params0,
+            args=(residuals, ),
+            method=method,
+            bounds=self.bounds
+        )
+
+        return results
+    
+    def forecast(self):
+        eps = self.residuals['eps'].tolist()
+        params = self.sigma_coefs_hat
+
+        sigma2 = np.ones(self.T)
+
+        for t in range(self.T):
+            sigma2[t] = params[0] + np.array(eps[max(t-self.d, 0):t])**2 @ np.array(params[1:min(t,self.d)+1])
+        
+        return sigma2
 
