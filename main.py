@@ -183,6 +183,6 @@ print(MA_results)
 
 AR_results = pd.DataFrame({'p': ARs, 'error': AR_error})
 AR_results = AR_results.sort_values(['error'])
+
 print(AR_results)
 
-AR(train['return'],8).plot()
