@@ -5,15 +5,18 @@ import statsmodels.api as sm
 import math
 from arch import arch_model
 from scipy.optimize import minimize
+from scipy.stats import norm
 import matplotlib.pyplot as plt
 
 import warnings
 
-warnings.simplefilter("ignore")
+#warnings.simplefilter("ignore")
 
 # create data
 
-ticker = "AAPL"
+tickers = ["AAPL", "MSFT", "HOG", "LUV", "PLAY", "GOOGL"]
+
+ticker = "PLAY"
 
 data = yf.download(ticker, period ="5y", interval="1d")
 
@@ -73,13 +76,16 @@ class AR:
         self.error = np.dot(dt['eps_hat'], dt['eps_hat'])/dt.shape[0]
         return dt
 
-    def plot(self):
+    def plot(self, **kwargs):
         data = self.get_error().reset_index()
-        data = data.head(20)
         plt.plot(data.index, data['y'], color='blue')
         plt.plot(data.index, data['y_hat'], color='red')
         plt.title(f"AR{self.p}")
-        plt.show()
+        save = kwargs.get('save')
+        if save:
+            plt.savefig(f"plots/AR{self.p}")
+        else:
+            plt.show()
 
 
 # create MA function
@@ -150,13 +156,17 @@ class MA:
         return dt
     
 
-    def plot(self):
+    def plot(self, **kwargs):
+        save = kwargs.get('save')
         data = self.get_error()
         data = data.head(20)
         plt.plot(data.index, data['y'],color='blue')
         plt.plot(data.index, data['y_hat'], color='red')
         plt.title(f"MA{self.q}")
-        plt.show()
+        if save:
+            plt.savefig(f"plots/MA{self.q}")
+        else:
+            plt.show()
 
 
 # create ARMA function
@@ -229,11 +239,29 @@ class ARMA:
         return pd.DataFrame({'y':self.y, 'y_hat':y_hat, 'eps':eps})
     
 
-    def plot(self):
+    def plot(self, **kwargs):
         data = self.forecast()
+        save = kwargs.get('save')
         plt.plot(range(data.shape[0]), data['y'], color='blue')
         plt.plot(range(data.shape[0]), data['y_hat'], color='red')
-        plt.show()
+        if save:
+            plt.savefig(f"plots/ARMA({self.p},{self.q})")
+        else:
+            plt.show()
+
+
+    def errors(self):
+        data = self.forecast()
+        y_hat_var = data['y_hat'].var()
+        y_var = data['y'].var()
+        print('yhat variance', y_hat_var)
+        print('actual variance', y_var)
+        average_MSE = (data['eps'] @ data['eps'])/len(data['eps'])
+        print('average MSE', average_MSE)
+        data['direction'] = data['y_hat']*data['y'] > 0
+        direction = data['direction'].mean()
+        print('proportion direction correct', direction)
+
 
 
 # create ARCH function
@@ -315,4 +343,42 @@ class ARCH:
             sigma2[t] = params[0] + np.array(eps[max(t-self.d, 0):t])**2 @ np.array(params[1:min(t,self.d)+1])
         
         return sigma2
+
+
+
+
+test_case = (3,3,3)
+
+testARMA = ARMA(p=test_case[0], q=test_case[1], y = train['return'])
+testData = testARMA.forecast()
+sig2 = testData['eps'].var()
+testARMA.errors()
+testParams = testARMA.params_hat
+testARCH = ARCH(train['return'], d=test_case[2], p=test_case[0], q=test_case[1], coefs=testParams)
+testData['sigma2'] = testARCH.forecast()
+testData['probPositive'] = testData.apply(lambda row: norm.cdf(row['y_hat']/math.sqrt(row['sigma2'])), axis=1)
+testData['probPositiveNaive'] = testData.apply(lambda row: norm.cdf(row['y_hat']/math.sqrt(sig2)), axis=1)
+testData['correct'] = testData['y']*(testData['probPositive']-0.5) > 0
+testData['correctNaive'] = testData['y']*(testData['probPositive']-0.5) > 0
+testData['absFrom50'] = abs(testData['probPositive']-0.5)
+testData.to_csv(f"test.csv", index=True)
+
+bounds = np.linspace(0, testData['probPositive'].max(), 1000)
+
+propC = []
+profit = []
+pInvestments = []
+for b in bounds:
+    dt2 = testData.copy()
+    dt2['buy'] = dt2['probPositive'] > b
+    pInvestments.append(dt2['buy'].sum()/len(dt2['y']))
+    profit.append(dt2[dt2['buy']]['y'].sum())
+
+
+print(testData['y'].sum())
+
+plt.title(f"{ticker}")
+plt.plot(pInvestments, profit, color='red', label='profit')
+plt.plot(pInvestments, [testData['y'].sum()]*len(bounds), color='grey', linestyle='--')
+plt.show()
 
