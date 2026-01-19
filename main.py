@@ -283,7 +283,6 @@ class ARCH:
         self.sigma_coefs_hat = self.fit().x
         
 
-
     def calculate_residuals(self):
         y = self.y
         eps = np.zeros(self.T)
@@ -332,6 +331,7 @@ class ARCH:
         )
 
         return results
+    
     
     def forecast(self):
         eps = self.residuals['eps'].tolist()
