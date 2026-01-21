@@ -7,38 +7,43 @@ from arch import arch_model
 from scipy.optimize import minimize
 from scipy.stats import norm
 import matplotlib.pyplot as plt
+from statsmodels.tsa.arima.model import ARIMA
+
 
 import warnings
 
-#warnings.simplefilter("ignore")
+warnings.simplefilter("ignore")
 
 # create data
 
-tickers = ["AAPL", "MSFT", "HOG", "LUV", "PLAY", "GOOGL"]
+tickersDict = dict(
+    Apple="AAPL",
+    Microsoft="MSFT",
+    HarleyDavidson="HOG",
+    SouthwestAirlines="LUV",
+    DaveAndBusters="PLAY",
+    Google="GOOGL",
+    Netflix="NFLX",
+    #Bitcoin="BTC",
+    Walmart="WMT",
+    SNP500="^GSPC",
+    Nasdaq100="QQQ",
+    Gold="GLD",
+    Telsa="TSLA",
+    FTSE100="^FTSE",
+    Nvidia="NVDA",
+    EliLilly="LLY",
+    JohnsonJohnson="JNJ"
+)
 
-ticker = "PLAY"
+tickers = list(tickersDict.values())
 
-data = yf.download(ticker, period ="5y", interval="1d")
+data = yf.download(tickers, period ="5y", interval="1d")
 
-dt = data[['Close']].rename(columns={"Close":"Price"})
-dt['return'] = dt['Price'].pct_change()
-
-dt.index = pd.to_datetime(data.index)
-
-# train test split
-
-cutoff_date = dt.index.max() - pd.DateOffset(years=1)
-
-
-train = dt[dt.index < cutoff_date]
-test = dt[dt.index >= cutoff_date]
-
-train['returnLag1'] = train['return'].shift(1)
-train['returnLag2'] = train['return'].shift(2)
-
-train = train.dropna(subset=[('return', '')])
-
-
+data = data[[item for item in data.columns if item[0] == 'Close']]
+data.columns = [item2 for _, item2 in data.columns]
+data = data.pct_change()
+data = data.dropna()
 
 # create AR function
 
@@ -263,7 +268,6 @@ class ARMA:
         print('proportion direction correct', direction)
 
 
-
 # create ARCH function
 
 class ARCH:
@@ -332,7 +336,7 @@ class ARCH:
 
         return results
     
-    
+
     def forecast(self):
         eps = self.residuals['eps'].tolist()
         params = self.sigma_coefs_hat
@@ -345,40 +349,105 @@ class ARCH:
         return sigma2
 
 
+class Indicators:
+    def __init__(self, y):
+        self.y = y
+        self.ARMA, self.p, self.q, self.dataset = self.search_ARMA()
+        self.l, self.u = self.search_bounds()
+        self.forecast_return = float(self.ARMA.forecast(steps=1))
+        self.search_recommendation()
+
+    def search_ARMA(self):
+        print('finding arma parameters')
+        ps = list(range(1, 5))
+        qs = list(range(1, 5))
+        models = []
+        errors = []
+        p_ = []
+        q_ = []
+        for p in ps:
+            for q in qs:
+                p_.append(p)
+                q_.append(q)
+                model = ARIMA(self.y, order=(p, 0, q))
+                results = model.fit()
+                fitted = results.fittedvalues
+                error = sum((np.array(fitted) - np.array(self.y))**2)/len(self.y)
+                models.append(results)
+                errors.append(error)
+
+        ind = np.array(errors).argmin()
+        data = pd.DataFrame({'y':self.y, 'y_hat': models[ind].fittedvalues})
+        data['residual'] = data['y'] - data['y_hat']
+        return models[ind], p_[ind], q_[ind], data
+    
+    def search_GARCH(self):
+        dt = self.dataset
+        model = arch_model(dt['residual'], vol="GARCH", p=1, q=1, mean="Zero")
+        mod_res = model.fit(disp='off')
+        dt['sigma2'] = mod_res.conditional_volatility
+        self.forecast_sigma2 = mod_res.forecast(horizon=1).variance.iloc[-1,0]
+        return dt
+    
+    def search_bounds(self):
+        print('finding bounds')
+        data = self.search_GARCH()
+        data['probPositive'] = data.apply(lambda row: norm.cdf(row['y_hat'], loc=0, scale=math.sqrt(row['sigma2'])), axis=1)
+        uppers = np.linspace(0.5, 1, 1000)
+        buy_profits = []
+        lowers = np.linspace(0, 0.5, 1000)
+        sell_profits = []
+        for u in uppers:
+            dt = data.copy()
+            dt['buy'] = dt['probPositive'] > u
+            buy_profits.append(dt[dt['buy']]['y'].sum())
+        for l in lowers:
+            dt = data.copy()
+            dt['sell'] = dt['probPositive'] < l
+            sell_profits.append(-dt[dt['sell']]['y'].sum())
+        ind_u = np.array(buy_profits).argmax()
+        u_ = uppers[ind_u]
+        ind_l = np.array(sell_profits).argmax()
+        l_ = lowers[ind_l]
+
+        return l_, u_
+    
+
+    def search_recommendation(self):
+        print('building recommendation')
+        self.prediction = norm.cdf(self.forecast_return, loc=0, scale=math.sqrt(self.forecast_sigma2))
+        if self.prediction < self.l:
+            self.recommendation = "sell"
+        elif self.prediction > self.u:
+            self.recommendation = "buy"
+        else:
+            self.recommendation = np.nan
+
+        return None
 
 
-test_case = (3,3,3)
+u_ = []
+l_ = []
+pred_ret = []
+pred_sigm = []
+pred_prob = []
+pred_recom = []    
+for ticker in tickers:
+    print(ticker)
+    info = Indicators(data[ticker])
+    u_.append(info.u)
+    l_.append(info.l)
+    pred_ret.append(info.forecast_return)
+    pred_sigm.append(info.forecast_sigma2)
+    pred_prob.append(info.prediction)
+    pred_recom.append(info.recommendation)
 
-testARMA = ARMA(p=test_case[0], q=test_case[1], y = train['return'])
-testData = testARMA.forecast()
-sig2 = testData['eps'].var()
-testARMA.errors()
-testParams = testARMA.params_hat
-testARCH = ARCH(train['return'], d=test_case[2], p=test_case[0], q=test_case[1], coefs=testParams)
-testData['sigma2'] = testARCH.forecast()
-testData['probPositive'] = testData.apply(lambda row: norm.cdf(row['y_hat']/math.sqrt(row['sigma2'])), axis=1)
-testData['probPositiveNaive'] = testData.apply(lambda row: norm.cdf(row['y_hat']/math.sqrt(sig2)), axis=1)
-testData['correct'] = testData['y']*(testData['probPositive']-0.5) > 0
-testData['correctNaive'] = testData['y']*(testData['probPositive']-0.5) > 0
-testData['absFrom50'] = abs(testData['probPositive']-0.5)
-testData.to_csv(f"test.csv", index=True)
+out = pd.DataFrame({'l':l_, 'u':u_, 'r':pred_ret, 's2':pred_sigm, 'p':pred_prob, 'recommendation':pred_recom}, index=tickers)
 
-bounds = np.linspace(0, testData['probPositive'].max(), 1000)
+print(out)
 
-propC = []
-profit = []
-pInvestments = []
-for b in bounds:
-    dt2 = testData.copy()
-    dt2['buy'] = dt2['probPositive'] > b
-    pInvestments.append(dt2['buy'].sum()/len(dt2['y']))
-    profit.append(dt2[dt2['buy']]['y'].sum())
+    
+    
+out.to_csv("example_output.csv")
 
-
-print(testData['y'].sum())
-
-plt.title(f"{ticker}")
-plt.plot(pInvestments, profit, color='red', label='profit')
-plt.plot(pInvestments, [testData['y'].sum()]*len(bounds), color='grey', linestyle='--')
-plt.show()
 
