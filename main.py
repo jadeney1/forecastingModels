@@ -8,6 +8,7 @@ from scipy.optimize import minimize
 from scipy.stats import norm
 import matplotlib.pyplot as plt
 from statsmodels.tsa.arima.model import ARIMA
+import sys
 
 
 import warnings
@@ -33,17 +34,22 @@ tickersDict = dict(
     FTSE100="^FTSE",
     Nvidia="NVDA",
     EliLilly="LLY",
-    JohnsonJohnson="JNJ"
+    JohnsonJohnson="JNJ",
+    aerospace="ITA",
+    brothcom="AVGO"
 )
 
 tickers = list(tickersDict.values())
 
 data = yf.download(tickers, period ="5y", interval="1d")
 
-data = data[[item for item in data.columns if item[0] == 'Close']]
-data.columns = [item2 for _, item2 in data.columns]
-data = data.pct_change()
-data = data.dropna()
+
+open_px = data['Open']
+close_px = data['Close']
+
+perc_change = (close_px - open_px)/open_px
+
+perc_change = perc_change.dropna(axis=0, how='any')
 
 # create AR function
 
@@ -434,7 +440,7 @@ pred_prob = []
 pred_recom = []    
 for ticker in tickers:
     print(ticker)
-    info = Indicators(data[ticker])
+    info = Indicators(perc_change[ticker])
     u_.append(info.u)
     l_.append(info.l)
     pred_ret.append(info.forecast_return)
@@ -449,5 +455,17 @@ print(out)
     
     
 out.to_csv("example_output.csv")
+
+# can you calculate the marginal benefit of keeping the market open for +- 1 minute?
+
+
+
+
+
+
+
+
+
+
 
 
