@@ -396,7 +396,7 @@ class Indicators:
         return dt
     
     def search_bounds(self):
-        print('finding bounds')
+        print('developing confidence bounds')
         data = self.search_GARCH()
         data['probPositive'] = data.apply(lambda row: norm.cdf(row['y_hat'], loc=0, scale=math.sqrt(row['sigma2'])), axis=1)
         uppers = np.linspace(0.5, 1, 1000)
@@ -431,37 +431,49 @@ class Indicators:
 
         return None
 
+def build():
+    u_ = []
+    l_ = []
+    pred_ret = []
+    pred_sigm = []
+    pred_prob = []
+    pred_recom = []    
+    for ticker in tickers:
+        print(ticker)
+        info = Indicators(perc_change[ticker])
+        u_.append(info.u)
+        l_.append(info.l)
+        pred_ret.append(info.forecast_return)
+        pred_sigm.append(info.forecast_sigma2)
+        pred_prob.append(info.prediction)
+        pred_recom.append(info.recommendation)
 
-u_ = []
-l_ = []
-pred_ret = []
-pred_sigm = []
-pred_prob = []
-pred_recom = []    
-for ticker in tickers:
-    print(ticker)
-    info = Indicators(perc_change[ticker])
-    u_.append(info.u)
-    l_.append(info.l)
-    pred_ret.append(info.forecast_return)
-    pred_sigm.append(info.forecast_sigma2)
-    pred_prob.append(info.prediction)
-    pred_recom.append(info.recommendation)
+    out = pd.DataFrame({'l':l_, 'u':u_, 'r':pred_ret, 's2':pred_sigm, 'p':pred_prob, 'recommendation':pred_recom}, index=tickers)
 
-out = pd.DataFrame({'l':l_, 'u':u_, 'r':pred_ret, 's2':pred_sigm, 'p':pred_prob, 'recommendation':pred_recom}, index=tickers)
+    out.to_csv("out_today.csv")
 
-print(out)
+    market_sum = out['recommendation'].value_counts(dropna=False)
 
-    
-    
-out.to_csv("example_output.csv")
+    if market_sum.loc['buy'] == market_sum.max():
+        message = "looking good let's gooooo"
+    elif market_sum.loc['sell'] == market_sum.max():
+        message = "uh oh, probably better drop it"
+    else:
+        message = "i guess nothing interesting today"
+
+
+    print(out)
+    print(message)
+        
+        
+    out.to_csv("example_output.csv")
 
 # can you calculate the marginal benefit of keeping the market open for +- 1 minute?
 
 
 
 
-
+build()
 
 
 
