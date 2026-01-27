@@ -43,7 +43,6 @@ tickers = list(tickersDict.values())
 
 data = yf.download(tickers, period ="5y", interval="1d")
 
-
 open_px = data['Open']
 close_px = data['Close']
 
@@ -461,6 +460,7 @@ def build():
     else:
         message = "i guess nothing interesting today"
 
+    print(f"forecasting for: {data.index[-1] + pd.Timedelta(days=1)}")
 
     print(out)
     print(message)
